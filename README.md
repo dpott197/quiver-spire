@@ -14,7 +14,9 @@ Every mode is played in rounds. A round lasts until one archer (or one team) is 
 | **Last Man Standing** | 1 point for being the last archer alive in a round. |
 | **Team Head Hunters** | Red against Blue. Every KO scores for your team. Teammates can't hurt each other. |
 
-Your own arrows never hurt you. A match ends at the end of a round once someone has reached the target with a clear lead.
+Your own arrows never hurt you.
+
+**Catch-up help** (on by default, in Match setup): like TowerFall, from round 2 onward an outright leader starts each round with 2 arrows instead of 3 and wears a gold crown, and anyone 3 KOs behind the leader (2 rounds behind in Last Man Standing) starts the round with a shield. In Team Head Hunters the leading team loses an arrow and the trailing team gets shields once it's 3 behind. A match ends at the end of a round once someone has reached the target with a clear lead.
 
 ## Treasure
 

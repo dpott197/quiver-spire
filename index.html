@@ -200,6 +200,11 @@ kbd { font-family: var(--body); font-size: 11px; border: 1px solid var(--stone-h
           <label><input type="radio" name="loot" id="loot-on" value="on" checked><span>On</span></label>
           <label><input type="radio" name="loot" id="loot-off" value="off"><span>Off</span></label>
         </div></div>
+      <div class="row"><label>Catch-up help</label>
+        <div class="seg" role="radiogroup">
+          <label><input type="radio" name="catchup" id="catchup-on" value="on" checked><span>On</span></label>
+          <label><input type="radio" name="catchup" id="catchup-off" value="off"><span>Off</span></label>
+        </div></div>
       <div class="row"><label>Sound</label>
         <div class="seg" role="radiogroup">
           <label><input type="radio" name="snd" id="snd-on" value="on" checked><span>On</span></label>
@@ -217,7 +222,7 @@ kbd { font-family: var(--body); font-size: 11px; border: 1px solid var(--stone-h
         <dt><kbd>Esc</kbd> <kbd>P</kbd></dt><dd>Pause (online, only the host can pause)</dd>
         <dt>Controller</dt><dd>Stick or d-pad to move and aim, A jump, X or Y shoot, B or any bumper or trigger dodge, Start to begin or pause</dd>
       </dl>
-      <p class="note">Your own arrows can't hurt you. Land on a head to stomp. Walk over arrows to collect them, up to six. A round ends after 90 seconds if no one wins it. Online, the host's browser runs the match, so the host should keep this page open.</p>
+      <p class="note">With catch-up help on, an outright leader (wearing a crown) starts each round with one arrow fewer, and anyone 3 KOs behind the leader (2 rounds in Last Man Standing) starts it with a shield. Your own arrows can't hurt you. Land on a head to stomp. Walk over arrows to collect them, up to six. A round ends after 90 seconds if no one wins it. Online, the host's browser runs the match, so the host should keep this page open.</p>
     </section>
     <section class="card" aria-labelledby="lootH">
       <h3 id="lootH">Treasure</h3>
@@ -573,8 +578,38 @@ function startRound() {
   });
   game.mode = 'play'; game.freezeT = 70; game.roundT = 0; game.endT = 0; game.feed = null;
   game.banner = { top: 'Round ' + game.round, sub: map.name };
+  applyCatchUp();
   buildMapCanvas();
   sfx.round();
+}
+
+// TowerFall-style catch-up: an outright leader starts the round an arrow short,
+// and anyone far behind starts it with a shield. Teams are judged by team score.
+const CATCHUP_GAP = { hh: 3, thh: 3, lms: 2 };
+function roundPopup(a, text, color) {
+  game.popups.push({ slot: a.slot, text, color, t: 120 });
+  if (net.role === 'host') net.events.push(['q', a.slot, text, color]);
+}
+function applyCatchUp() {
+  for (const a of game.archers) a.leader = false;
+  if (!game.settings.catchUp || game.round < 2) return;
+  const gap = CATCHUP_GAP[game.settings.match] || 3;
+  const handicap = a => { a.quiver = ['n', 'n']; a.leader = true; roundPopup(a, '-1 arrow', '#f4a53c'); };
+  const boost = a => { a.shield = true; roundPopup(a, '+shield', '#bfe6ff'); };
+  if (teamMode()) {
+    const [r, b] = game.teamScore;
+    if (r === b) return;
+    const lead = r > b ? 0 : 1;
+    for (const a of game.archers) {
+      if (a.team === lead) handicap(a);
+      else if (Math.abs(r - b) >= gap) boost(a);
+    }
+    return;
+  }
+  const top = Math.max(...game.archers.map(a => a.score));
+  const leaders = game.archers.filter(a => a.score === top);
+  if (top > 0 && leaders.length === 1) handicap(leaders[0]);
+  for (const a of game.archers) if (top - a.score >= gap) boost(a);
 }
 
 // ---------- archers ----------
@@ -1297,7 +1332,7 @@ function broadcast() {
     sh: r1(game.shake), g: game.settings.goal, md: game.settings.match, ts: game.teamScore,
     f: game.feed ? [game.feed.k, game.feed.v, game.feed.t] : 0,
     a: game.archers.map(a => [a.slot, r1(a.x), r1(a.y), r2(a.vx), r2(a.vy), a.facing, a.aimX, a.aimY, a.quiver.join(''), a.alive ? 1 : 0,
-      a.dodgeT, a.onGround ? 1 : 0, a.runF, a.score, a.youT, a.name, a.shieldT, a.team, (a.shield ? 1 : 0) | (a.wings ? 2 : 0) | (a.boots ? 4 : 0)]),
+      a.dodgeT, a.onGround ? 1 : 0, a.runF, a.score, a.youT, a.name, a.shieldT, a.team, (a.shield ? 1 : 0) | (a.wings ? 2 : 0) | (a.boots ? 4 : 0) | (a.leader ? 8 : 0)]),
     r: game.arrows.map(r => [r1(r.x), r1(r.y), r2(r.ang), r.state === 'fly' ? 0 : r.state === 'drop' ? 1 : 2, r.slot, r.type]),
     c: game.chests.map(c => [c.x, c.y]),
     h: game.hazards.map(h => [r1(h.x), r1(h.y), h.t, h.seed]),
@@ -1389,7 +1424,7 @@ function applySnap(s) {
     const r = ROSTER[v[0] & 3], team = v[17] & 1, fl = +v[18] || 0;
     return { slot: v[0] & 3, body: r.body, dark: teamMode() ? TEAMS[team].dark : r.dark, x: v[1], y: v[2], vx: v[3], vy: v[4], facing: v[5], aimX: v[6], aimY: v[7],
       quiver: String(v[8]).replace(/[^nblrd]/g, '').slice(0, MAX_ARROWS).split('').filter(Boolean), alive: !!v[9], dodgeT: v[10], onGround: !!v[11], runF: v[12],
-      score: v[13], youT: v[14], name: cleanName(v[15]) || r.name, shieldT: +v[16] || 0, team, shield: !!(fl & 1), wings: !!(fl & 2), boots: !!(fl & 4), w: 8, h: 12 };
+      score: v[13], youT: v[14], name: cleanName(v[15]) || r.name, shieldT: +v[16] || 0, team, shield: !!(fl & 1), wings: !!(fl & 2), boots: !!(fl & 4), leader: !!(fl & 8), w: 8, h: 12 };
   });
   game.arrows = s.r.map(v => ({ x: v[0], y: v[1], ang: v[2], state: ['fly', 'drop', 'stuck'][v[3]] || 'stuck', slot: v[4] & 3, type: ITEMS[v[5]] || v[5] === 'n' ? v[5] : 'n' }));
   game.chests = (s.c || []).map(v => ({ x: v[0], y: v[1], w: 10, h: 9 }));
@@ -1401,6 +1436,7 @@ function applySnap(s) {
     else if (ev[0] === 'b') boomParts(ev[1], ev[2]);
     else if (ev[0] === 'h') shieldParts(ev[1], ev[2]);
     else if (ev[0] === 'p' && ITEMS[ev[2]]) { game.popups.push({ slot: ev[1] & 3, item: ev[2], t: 80 }); chestParts(ev[3], ev[4]); }
+    else if (ev[0] === 'q' && /^#[0-9a-f]{6}$/i.test(ev[3])) game.popups.push({ slot: ev[1] & 3, text: String(ev[2]).replace(/[^a-z0-9 +-]/gi, '').slice(0, 16), color: ev[3], t: 120 });
   }
   if (!!s.p !== game.paused) {
     game.paused = !!s.p;
@@ -1532,6 +1568,7 @@ function drawArcher(a) {
     const n = a.quiver.length;
     a.quiver.forEach((t, i) => { ctx.fillStyle = arrowColor(t, a.slot); ctx.fillRect(x + 4 - n + i * 2, y - 4, 1, 2); });
     if (teamMode()) { ctx.fillStyle = TEAMS[a.team].color; ctx.fillRect(x + 2, y - 6, 4, 1); }
+    if (a.leader) { ctx.fillStyle = '#ffd447'; ctx.fillRect(x + 2, y - 8, 5, 1); ctx.fillRect(x + 2, y - 9, 1, 1); ctx.fillRect(x + 4, y - 9, 1, 1); ctx.fillRect(x + 6, y - 9, 1, 1); }
     if (a.shield) { ctx.strokeStyle = 'rgba(191,230,255,.85)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x + 4, y + 6, 9, 0, Math.PI * 2); ctx.stroke(); }
     if (a.youT > 0 && a.slot === game.mySlot && game.frame % 20 < 14) { ctx.fillStyle = '#eee5d3'; ctx.fillRect(x + 2, y - 10, 5, 1); ctx.fillRect(x + 3, y - 9, 3, 1); ctx.fillRect(x + 4, y - 8, 1, 1); }
   });
@@ -1591,7 +1628,7 @@ function render() {
   for (const p of game.parts) { ctx.fillStyle = p.color; ctx.fillRect(Math.round(p.x), Math.round(p.y), 1, 1); }
   for (const p of game.popups) {
     const a = game.archers.find(x => x.slot === p.slot);
-    if (a) canvasText(ITEMS[p.item].name.toUpperCase(), Math.min(W - 40, Math.max(40, a.x + 4)), a.y - 12 - (80 - p.t) * 0.15, 8, ITEMS[p.item].color);
+    if (a) canvasText((p.text || ITEMS[p.item].name).toUpperCase(), Math.min(W - 56, Math.max(56, a.x + 4)), a.y - 14 - (80 - Math.min(p.t, 80)) * 0.15, 8, p.color || ITEMS[p.item].color);
   }
   ctx.restore();
   const b = game.banner;
@@ -1650,7 +1687,7 @@ function showOnly(k) { hideOverlays(); el[k].hidden = false; }
 const lobbyStatus = t => { $('lobbyStatus').textContent = t; };
 const joinStatus = t => { $('joinStatus').textContent = t; };
 const radio = name => document.querySelector(`input[name="${name}"]:checked`).value;
-function readSetup() { return { mode: radio('mode'), foes: +radio('foes'), diff: radio('diff'), goal: +radio('goal'), match: radio('match'), treasure: radio('loot') === 'on' }; }
+function readSetup() { return { mode: radio('mode'), foes: +radio('foes'), diff: radio('diff'), goal: +radio('goal'), match: radio('match'), treasure: radio('loot') === 'on', catchUp: radio('catchup') === 'on' }; }
 
 function describeMode() {
   const m = MODES[radio('match')];
@@ -1674,7 +1711,7 @@ function togglePause() {
   el.pauseOv.hidden = !game.paused;
   if (game.paused) $('resumeBtn').focus();
 }
-function demo() { startMatch({ mode: 'watch', foes: 3, diff: 'normal', goal: 10, match: 'hh', treasure: true }, true); }
+function demo() { startMatch({ mode: 'watch', foes: 3, diff: 'normal', goal: 10, match: 'hh', treasure: true, catchUp: true }, true); }
 function toMenu() {
   closeNet();
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
