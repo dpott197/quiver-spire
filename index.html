@@ -213,7 +213,7 @@ kbd { font-family: var(--body); font-size: 11px; border: 1px solid var(--stone-h
         <dt><kbd>↑</kbd><kbd>↓</kbd> or <kbd>W</kbd><kbd>S</kbd></dt><dd>Aim up or down. Down drops through ledges</dd>
         <dt><kbd>Z</kbd> <kbd>J</kbd> <kbd>Space</kbd></dt><dd>Jump. Press again in mid-air to double-jump, or against a wall to wall-jump</dd>
         <dt><kbd>X</kbd> <kbd>K</kbd></dt><dd>Shoot in the held direction (8-way)</dd>
-        <dt><kbd>C</kbd> <kbd>L</kbd> <kbd>Shift</kbd></dt><dd>Dodge. Catches arrows mid-dash</dd>
+        <dt><kbd>C</kbd> <kbd>L</kbd> <kbd>Shift</kbd></dt><dd>Dodge. Catches arrows mid-dash. Jump during a dodge on the ground for a super jump that keeps the dash speed</dd>
         <dt><kbd>Esc</kbd> <kbd>P</kbd></dt><dd>Pause (online, only the host can pause)</dd>
         <dt>Controller</dt><dd>Stick or d-pad to move and aim, A jump, X or Y shoot, B or any bumper or trigger dodge, Start to begin or pause</dd>
       </dl>
@@ -324,9 +324,9 @@ const MODES = {
 };
 
 const AI_LEVELS = {
-  easy:   { react: 26, acc: 0.45, dodge: 0.18, catchP: 0.05, gap: 55, lead: 0,   evade: 16 },
-  normal: { react: 12, acc: 0.75, dodge: 0.5,  catchP: 0.2,  gap: 30, lead: 0.5, evade: 6 },
-  hard:   { react: 4,  acc: 0.93, dodge: 0.85, catchP: 0.45, gap: 14, lead: 1,   evade: 1 },
+  easy:   { react: 26, acc: 0.45, dodge: 0.18, catchP: 0.05, gap: 55, lead: 0,   evade: 16, superJ: 0 },
+  normal: { react: 12, acc: 0.75, dodge: 0.5,  catchP: 0.2,  gap: 30, lead: 0.5, evade: 6,  superJ: 0.02 },
+  hard:   { react: 4,  acc: 0.93, dodge: 0.85, catchP: 0.45, gap: 14, lead: 1,   evade: 1,  superJ: 0.05 },
 };
 
 const DIRS = [[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1],[1,1],[-1,1]];
@@ -409,6 +409,7 @@ const sfx = {
   chest: () => { tone(523, 1046, 0.12, 'triangle', 0.05); setTimeout(() => tone(784, 1568, 0.18, 'triangle', 0.05), 90); },
   pop: () => tone(1300, 260, 0.14, 'square', 0.05),
   dodge: () => tone(180, 640, 0.07, 'sawtooth', 0.025),
+  superJump: () => { tone(220, 880, 0.12, 'sawtooth', 0.04); tone(440, 1320, 0.1, 'square', 0.025); },
   stomp: () => tone(220, 110, 0.1, 'square', 0.06),
   round: () => { tone(523, 523, 0.1, 'square', 0.04); setTimeout(() => tone(784, 784, 0.18, 'square', 0.04), 110); },
 };
@@ -525,14 +526,14 @@ function makeArcher(slot, seat, level) {
     slot, name: kind === 'ai' ? r.name : seat.name, body: r.body, dark: r.dark, team: 0,
     ai: kind === 'ai' ? { lv: AI_LEVELS[level] } : null, remote: kind === 'remote' ? seat.peer : null,
     x: 0, y: 0, vx: 0, vy: 0, w: 8, h: 12, facing: 1, quiver: [], alive: true, onGround: false, onPlat: false,
-    coyote: 0, jumpBuf: 0, wallDir: 0, dropT: 0, dodgeT: 0, dodgeCd: 0, dodgeX: 0, dodgeY: 0, shootCd: 0, airJumps: 1,
+    coyote: 0, jumpBuf: 0, wallDir: 0, dropT: 0, dodgeT: 0, dodgeCd: 0, dodgeX: 0, dodgeY: 0, shootCd: 0, airJumps: 1, superT: 0,
     aimX: 1, aimY: 0, score: 0, runF: 0, prevY: 0, youT: 0, shieldT: 0, shield: false, wings: false, boots: false,
   };
 }
 
 function resetAI(a) {
   Object.assign(a.ai, { seeT: 0, shotT: 30 + rand(30), goalT: 0, gx: a.x, gy: a.y, wander: 0, wanderT: 0,
-    jumpHold: 0, best: Infinity, stuckT: 0, seen: new Set(), evadeT: -1, evadeArrow: null, evadeMode: 'jump' });
+    jumpHold: 0, best: Infinity, stuckT: 0, seen: new Set(), evadeT: -1, evadeArrow: null, evadeMode: 'jump', superPlan: false });
 }
 
 // seats: [{kind:'local'|'remote', name, peer}] in slot order; empty seats become AI
@@ -566,7 +567,7 @@ function startRound() {
   game.archers.forEach((a, i) => {
     const [c, r] = spawns[i % spawns.length];
     Object.assign(a, { x: c * T + 4, y: (r + 1) * T - a.h, vx: 0, vy: 0, quiver: ['n', 'n', 'n'], alive: true, dodgeT: 0, dodgeCd: 0,
-      shootCd: 0, jumpBuf: 0, coyote: 0, dropT: 0, airJumps: 1, shieldT: 0, shield: false, wings: false, boots: false,
+      shootCd: 0, jumpBuf: 0, coyote: 0, dropT: 0, airJumps: 1, superT: 0, shieldT: 0, shield: false, wings: false, boots: false,
       facing: c < COLS / 2 ? 1 : -1, youT: a.ai ? 0 : 120 });
     if (a.ai) resetAI(a);
   });
@@ -587,7 +588,13 @@ function updateArcher(a, inp) {
   const hor = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
   const ver = (inp.down ? 1 : 0) - (inp.up ? 1 : 0);
 
-  if (a.dodgeT > 0) {
+  if (a.dodgeT > 0 && inp.jumpPressed && grounded(a)) {
+    // super jump: jumping out of a dodge on the ground cancels it into a bigger jump that keeps the dash speed
+    a.dodgeT = 0; a.vy = JUMP_V * 1.18; a.vx = (a.dodgeX || a.facing) * 3.3;
+    a.superT = 30; a.coyote = 0; a.jumpBuf = 0; a.onGround = false;
+    for (let i = 0; i < 10; i++) spawnPart(a.x + rand(a.w), a.y + a.h, rand(-1.4, 1.4), rand(-0.4, 0.6), 18, i % 2 ? a.body : '#eee5d3', 0.04);
+    sfx.superJump();
+  } else if (a.dodgeT > 0) {
     a.dodgeT--;
     a.vx = a.dodgeX * 3.3; a.vy = a.dodgeY * 3.3;
     if (a.dodgeT === 0) { a.vx *= 0.45; a.vy *= 0.45; }
@@ -595,7 +602,15 @@ function updateArcher(a, inp) {
   } else {
     if (hor) a.facing = hor;
     const target = hor * RUN * (a.boots ? 1.4 : 1), acc = a.onGround ? 0.4 : 0.22;
-    if (a.vx < target) a.vx = Math.min(target, a.vx + acc); else if (a.vx > target) a.vx = Math.max(target, a.vx - acc);
+    if (a.superT > 0 && !a.onGround) {
+      // a super jump keeps its dash speed in the air; steering back against it only slows it gently
+      a.superT--;
+      if (hor && Math.sign(hor) !== Math.sign(a.vx)) a.vx += hor * 0.12;
+      if (Math.random() < 0.5) spawnPart(a.x + rand(a.w), a.y + rand(a.h), 0, 0, 8, a.body, 0);
+    } else {
+      a.superT = 0;
+      if (a.vx < target) a.vx = Math.min(target, a.vx + acc); else if (a.vx > target) a.vx = Math.max(target, a.vx - acc);
+    }
 
     if (inp.jumpPressed) a.jumpBuf = 6;
     if (a.jumpBuf > 0) {
@@ -673,6 +688,16 @@ function updateArcher(a, inp) {
     if (ar.state !== 'stuck' || a.quiver.length >= MAX_ARROWS) continue;
     if (inBox(ar.px, ar.py, a.x - 3, a.y - 3, a.w + 6, a.h + 6)) { ar.dead = true; a.quiver.push(ar.type); sfx.pickup(); }
   }
+}
+
+// standing on solid ground or a ledge right now (works mid-dodge, when vy is held at zero)
+function grounded(a) {
+  if (boxSolid(a.x, a.y + 1, a.w, a.h)) return true;
+  const r = Math.floor((a.y + a.h + 0.5) / T);
+  if (Math.abs(a.y + a.h - r * T) > 1) return false;
+  const c0 = Math.floor(a.x / T), c1 = Math.floor((a.x + a.w - 0.001) / T);
+  for (let c = c0; c <= c1; c++) if (tileAt(c, r) === '-') return true;
+  return false;
 }
 
 function fireArrow(a, ax, ay) {
@@ -981,6 +1006,11 @@ function aiInput(a) {
   if (dir < 0) inp.left = true; else if (dir > 0) inp.right = true;
   const jump = () => { inp.jumpPressed = true; ai.jumpHold = 18; };
   const c = Math.floor(cx / T), fr = Math.floor((a.y + a.h + 1) / T);
+  // super jump toward a high, far goal: dodge along the ground, then jump out of it next tick
+  if (ai.superPlan && a.dodgeT > 0) { jump(); ai.superPlan = false; }
+  else if (a.onGround && lv.superJ && a.dodgeCd === 0 && dir && dy < -30 && Math.abs(dx) > 48 && Math.random() < lv.superJ) {
+    inp.dodge = true; inp.dodgeDir = [dir, 0]; ai.superPlan = true;
+  }
   if (a.onGround) {
     const groundAhead = dir && /[#-]/.test(tileAt(Math.floor((cx + dir * 10) / T), fr));
     if (dir && boxSolid(a.x + dir * 3, a.y, a.w, a.h)) jump();

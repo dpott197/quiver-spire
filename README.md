@@ -54,6 +54,7 @@ The host's browser runs the match and friends connect to it directly over WebRTC
 | Jump, double-jump in mid-air, wall-jump | Z, J or Space |
 | Shoot (8 directions) | X or K |
 | Dodge (catches arrows) | C, L or Shift |
+| Super jump | Jump during a dodge on the ground: a higher jump that keeps the dash speed |
 | Pause (host only online) | Esc or P |
 
 **Controller:** any controller the browser recognises works (Xbox, PlayStation, Switch Pro and most others). Stick or d-pad to move and aim, A jump, X or Y shoot, B or any bumper or trigger dodge, Start to begin a match or pause. Press a button once after plugging it in so the browser notices it.
