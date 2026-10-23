@@ -1030,10 +1030,14 @@ function aiInput(a) {
   // shoot
   if (ai.shotT > 0) ai.shotT--;
   if (q > 0 && ai.shotT <= 0 && a.shootCd === 0 && a.dodgeT === 0) {
-    let sol = null;
-    if (game.frame % 2 === 0) for (const d of DIRS) { const e = simShot(a, d[0], d[1], lv.lead); if (e) { sol = d; break; } }
-    if (sol) ai.seeT++; else ai.seeT = Math.max(0, ai.seeT - 1);
-    if (sol && ai.seeT >= lv.react) {
+    // look for a firing line every other tick and remember the answer in between
+    if (game.frame % 2 === 0) {
+      ai.sol = null;
+      for (const d of DIRS) { if (simShot(a, d[0], d[1], lv.lead)) { ai.sol = d; break; } }
+      if (ai.sol) ai.seeT++; else ai.seeT = Math.max(0, ai.seeT - 1);
+    }
+    const sol = ai.sol;
+    if (sol && ai.seeT * 2 >= lv.react) {
       let d = sol;
       if (Math.random() > lv.acc) d = pick(DIRS.filter(o => Math.abs(o[0] - sol[0]) + Math.abs(o[1] - sol[1]) === 1));
       inp.shoot = true; inp.aim = d;
